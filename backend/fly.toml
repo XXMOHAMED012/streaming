@@ -1,28 +1,34 @@
-app = "streaming"
-primary_region = "fra"
+# fly.toml app configuration file generated for streaming on 2026-01-20T01:33:32+02:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'streaming'
+primary_region = 'fra'
 
 [build]
-  dockerfile = "Dockerfile"
+  dockerfile = 'Dockerfile'
 
 [processes]
-  app = "npm start"
-  worker = "npm run start:worker"
+  app = 'npm start'
+  worker = 'npm run start:worker'
 
-
-[[http_service]]
+[http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = true
+  auto_stop_machines = 'stop'
   auto_start_machines = true
   min_machines_running = 1
-  processes = ["app"] # هذا يعني أن منفذ الويب يذهب فقط لعملية الـ app
+  processes = ['app']
 
 [[vm]]
-  size = "shared-cpu-2x"
-  memory = "1024mb" # 256 قد تكون قليلة للترميز
-  processes = ["worker"]
+  size = 'shared-cpu-2x'
+  memory = '1gb'
+  processes = ['worker']
 
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "256mb"
-  processes = ["app"]
+  size = 'shared-cpu-1x'
+  memory = '512mb'
+  cpus = 1
+  memory_mb = 512
+  processes = ['app']
