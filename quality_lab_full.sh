@@ -1,61 +1,64 @@
 #!/bin/bash
 
 # ==============================================================================
-#  QUALITY LAB: DURATION LOCKED (STRICT FIX)
+#  FULL VIDEO QUALITY AUDIT (HLS vs REFERENCE)
 # ==============================================================================
 
 if [ "$#" -ne 2 ]; then
-    echo "Usage: ./quality_lab.sh <original_reference.mp4> <encoded_version.ts>"
+    echo "Usage: ./quality_lab_full.sh <original_reference.mp4> <playlist.m3u8>"
+    echo "Example: ./quality_lab_full.sh almfkr502.mp4 ./results_almfkr502/1080p.m3u8"
     exit 1
 fi
 
 REF="$1"
-DIST="$2"
-BASENAME=$(basename -- "$DIST")
+PLAYLIST="$2"
+BASENAME=$(basename -- "$PLAYLIST")
+# اسم المجلد الخاص بالتقارير
 REPORT_DIR="./quality_reports"
-REPORT_FILE="$REPORT_DIR/REPORT_${BASENAME%.*}.txt"
-VMAF_JSON="$REPORT_DIR/vmaf_raw.json"
-SSIM_LOG="$REPORT_DIR/ssim_raw.log"
-PSNR_LOG="$REPORT_DIR/psnr_raw.log"
+# تقرير خاص للفحص الكامل
+REPORT_FILE="$REPORT_DIR/FULL_REPORT_${BASENAME%.*}.txt"
+
+VMAF_JSON="$REPORT_DIR/vmaf_full.json"
+SSIM_LOG="$REPORT_DIR/ssim_full.log"
+PSNR_LOG="$REPORT_DIR/psnr_full.log"
 
 command -v bc >/dev/null 2>&1 || { echo >&2 "Error: 'bc' is required."; exit 1; }
 
 mkdir -p "$REPORT_DIR"
 rm -f "$VMAF_JSON" "$SSIM_LOG" "$PSNR_LOG"
 
-echo ">> [1/5] Checking Environment..."
+echo "--------------------------------------------------------"
+echo ">> [INIT] Reference: $REF"
+echo ">> [INIT] Playlist:  $PLAYLIST"
+echo "--------------------------------------------------------"
+
+echo ">> [1/4] Checking Environment..."
 
 HAS_VMAF=$(ffmpeg -filters 2>/dev/null | grep libvmaf)
 if [ -z "$HAS_VMAF" ]; then
     echo "!! WARNING: No libvmaf found. Mode: STRUCTURAL ONLY."
     MODE="STRUCTURAL"
 else
-    echo ">> VMAF Detected. Mode: FULL."
+    echo ">> VMAF Detected. Mode: FULL ANALYTICS."
     MODE="FULL"
     VMAF_MODEL_PATH="$REPORT_DIR/vmaf_v0.6.1.json"
     if [ ! -f "$VMAF_MODEL_PATH" ]; then
+        echo ">> Downloading VMAF Model..."
         wget -q -O "$VMAF_MODEL_PATH" https://github.com/Netflix/vmaf/raw/master/model/vmaf_v0.6.1.json
     fi
 fi
 
-echo ">> [2/5] Calculating Strict Duration..."
+echo ">> [2/4] Configuring Engines..."
 
-# --- التعديل الحاسم: قراءة مدة المقطع القصير بدقة ---
-DIST_DURATION=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$DIST")
-echo "   -> Segment Duration: $DIST_DURATION seconds"
-
-if [ -z "$DIST_DURATION" ]; then
-    echo "!!!! Error: Could not determine duration. Using default 10s."
-    DIST_DURATION=10
-fi
-
-echo ">> [3/5] Normalizing Timebases..."
-
+# استخراج خصائص الفيديو الأصلي لتوحيد المقاييس
 REF_FPS=$(ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate -of default=noprint_wrappers=1:nokey=1 "$REF")
 REF_W=$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=s=x:p=0 "$REF")
 REF_H=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=s=x:p=0 "$REF")
 
-# توحيد الزمن وتصفير العداد
+# الفلاتر السحرية لتوحيد الزمن والأبعاد
+# fps: توحيد الإطارات
+# settb: توحيد القاعدة الزمنية
+# setpts: تصفير العداد لضمان البدء من الصفر
 COMMON_FILTERS="fps=${REF_FPS},settb=AVTB,setpts=PTS-STARTPTS"
 
 if [ "$MODE" == "FULL" ]; then
@@ -75,15 +78,16 @@ else
     MAP_CMD="-map [ssim_out] -map [psnr_out]"
 fi
 
-echo ">> [4/5] Running Analysis (Locked to $DIST_DURATION sec)..."
+echo ">> [3/4] Running Full Analysis (This will take time)..."
 
-# --- التعديل الحاسم: إضافة -t لإجبار التوقف ---
+# نمرر ملف الـ m3u8 كمدخل ثاني. ffmpeg سيعالجه كفيديو كامل متصل.
+# -shortest: مهم جداً لإيقاف المقارنة إذا كان أحد الفيديوهات أقصر من الآخر (لتجنب حساب الشاشة السوداء)
 ffmpeg -hide_banner -stats \
     -i "$REF" \
-    -i "$DIST" \
+    -i "$PLAYLIST" \
     -filter_complex "$FILTER_COMPLEX" \
     $MAP_CMD \
-    -t "$DIST_DURATION" \
+    -shortest \
     -f null - 
 
 RETCODE=$?
@@ -93,8 +97,9 @@ if [ $RETCODE -ne 0 ]; then
 fi
 
 echo ""
-echo ">> [5/5] Parsing Data..."
+echo ">> [4/4] Generating Final Report..."
 
+# دالة لحساب المتوسطات
 get_avg() {
     if [ -f "$1" ]; then
         grep -oP "$2" "$1" | awk '{ total += $1; count++ } END { if(count>0) print total/count; else print "0" }'
@@ -103,41 +108,60 @@ get_avg() {
     fi
 }
 
+# دالة لاستخراج أسوأ قيمة (Minimum)
+get_min() {
+    if [ -f "$1" ]; then
+        grep -oP "$2" "$1" | sort -n | head -1
+    else
+        echo "N/A"
+    fi
+}
+
 if [ "$MODE" == "FULL" ] && [ -f "$VMAF_JSON" ]; then
     if command -v jq >/dev/null 2>&1; then
-        VMAF_SCORE=$(jq '.pooled_metrics.vmaf.mean' "$VMAF_JSON" 2>/dev/null)
+        VMAF_MEAN=$(jq '.pooled_metrics.vmaf.mean' "$VMAF_JSON" 2>/dev/null)
+        VMAF_MIN=$(jq '.pooled_metrics.vmaf.min' "$VMAF_JSON" 2>/dev/null)
     else
-        VMAF_SCORE=$(grep -oP '"mean":\s*\K[0-9.]+' "$VMAF_JSON" | head -1)
+        VMAF_MEAN=$(grep -oP '"mean":\s*\K[0-9.]+' "$VMAF_JSON" | head -1)
+        VMAF_MIN="N/A (jq missing)"
     fi
-    if [ -z "$VMAF_SCORE" ] || [ "$VMAF_SCORE" == "null" ]; then VMAF_SCORE="0"; fi
+    if [ -z "$VMAF_MEAN" ] || [ "$VMAF_MEAN" == "null" ]; then VMAF_MEAN="0"; fi
 else
-    VMAF_SCORE="N/A"
+    VMAF_MEAN="N/A"
+    VMAF_MIN="N/A"
 fi
 
-SSIM_Y=$(get_avg "$SSIM_LOG" 'Y:\K[0-9.]+')
-PSNR_Y=$(get_avg "$PSNR_LOG" 'y:\K[0-9.]+')
+SSIM_MEAN=$(get_avg "$SSIM_LOG" 'Y:\K[0-9.]+')
+SSIM_MIN=$(get_min "$SSIM_LOG" 'Y:\K[0-9.]+')
 
+PSNR_MEAN=$(get_avg "$PSNR_LOG" 'y:\K[0-9.]+')
+
+# كتابة التقرير
 {
     echo "####################################################################"
-    echo "             QUALITY FORENSICS REPORT (STRICT DURATION)"
+    echo "             FULL VIDEO AUDIT REPORT (END-TO-END)"
     echo "####################################################################"
-    echo "File: $(basename "$DIST")"
-    echo "Analyzed Duration: $DIST_DURATION seconds"
+    echo "Date: $(date)"
+    echo "Reference File: $REF"
+    echo "Playlist File:  $PLAYLIST"
     echo "--------------------------------------------------------------------"
     
     if [ "$MODE" == "FULL" ]; then
-        echo "1. VMAF METRICS"
-        echo "   • Mean Score:      $VMAF_SCORE / 100"
+        echo "1. VMAF METRICS (Visual Perception)"
+        echo "   • Mean Score:      $VMAF_MEAN / 100"
+        echo "   • Minimum Score:   $VMAF_MIN / 100 (Worst moment)"
         echo "--------------------------------------------------------------------"
     fi
 
-    echo "2. SSIM METRICS"
-    echo "   • Mean Y-SSIM:     $SSIM_Y / 1.0000"
+    echo "2. SSIM METRICS (Structural Integrity)"
+    echo "   • Mean Y-SSIM:     $SSIM_MEAN / 1.0000"
+    echo "   • Min Y-SSIM:      $SSIM_MIN / 1.0000"
     echo "--------------------------------------------------------------------"
     echo "3. PSNR METRICS"
-    echo "   • Mean Y-PSNR:     $PSNR_Y dB"
+    echo "   • Mean Y-PSNR:     $PSNR_MEAN dB"
     echo "####################################################################"
 } > "$REPORT_FILE"
 
-echo ">> Report Generated: $REPORT_FILE"
+echo ">> Full Audit Complete."
+echo ">> Report: $REPORT_FILE"
 cat "$REPORT_FILE"
