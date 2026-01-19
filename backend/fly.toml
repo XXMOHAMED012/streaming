@@ -1,0 +1,31 @@
+app = "streaming"
+primary_region = "fra"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[processes]
+  api = "node dist/api.js"      # سيرفر الاستقبال
+  worker = "node dist/worker.js" # محرك المعالجة
+
+[[services]]
+  processes = ["api"]
+  internal_port = 8080
+  protocol = "tcp"
+  
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443
+
+[[vm]]
+  size = "shared-cpu-2x"  
+  memory = "2gb"        
+  processes = ["worker"]
+  
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+  processes = ["api"]

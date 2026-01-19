@@ -1,0 +1,16 @@
+# Server Configuration
+PORT=8080
+NODE_ENV=production
+
+# 1. Neon Database (Postgres)
+DATABASE_URL="postgres://user:pass@ep-xyz.us-east-1.aws.neon.tech/neondb?sslmode=require"
+
+# 2. Tigris / S3 (Object Storage)
+AWS_ACCESS_KEY_ID="tid_..."
+AWS_SECRET_ACCESS_KEY="tsec_..."
+AWS_REGION="auto"
+AWS_ENDPOINT="https://fly.storage.tigris.dev"
+BUCKET_NAME="qudurat-videos"
+
+# 3. Upstash (Redis Queue)
+REDIS_URL="rediss://default:pass@global-xyz.upstash.io:6379"
