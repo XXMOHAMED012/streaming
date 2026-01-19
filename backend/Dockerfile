@@ -1,29 +1,32 @@
-# استخدم صورة Linux Debian خفيفة
-FROM node:20-bullseye-slim
+# 1. استخدام صورة Node.js خفيفة مبنية على Debian (لأنها تدعم apt-get بشكل ممتاز)
+FROM node:20-slim
 
-# 1. تثبيت FFmpeg و bc (الأدوات المطلوبة لسكربت الباش)
+# 2. تثبيت المكتبات الضرورية للنظام (FFmpeg + Python للبناء)
 RUN apt-get update && apt-get install -y \
     ffmpeg \
-    bc \
+    python3 \
+    make \
+    g++ \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. إعداد مجلد العمل
+# 3. تحديد مجلد العمل
 WORKDIR /app
 
-# 3. نسخ ملفات المشروع وتثبيت التبعيات
+# 4. نسخ ملفات تعريف المشروع وتثبيت المكتبات
 COPY package*.json ./
-RUN npm install --production
+RUN npm install
 
-# 4. نسخ السكربتات والكود المصدري
-COPY scripts ./scripts
-COPY dist ./dist  
-# (ملاحظة: نفترض أنك قمت بعمل build للـ TypeScript إلى مجلد dist)
+# 5. نسخ باقي ملفات المشروع (الكود + السكربتات)
+COPY . .
 
-# 5. إعطاء صلاحية التنفيذ لسكربت الترميز
-RUN chmod +x ./scripts/encode_master.sh
+# 6. بناء المشروع (تحويل TS إلى JS)
+RUN npm run build
 
-# 6. المنافذ (للـ API)
+# 7. إعطاء صلاحية التنفيذ لسكربت FFmpeg (مهم جداً)
+RUN chmod +x scripts/encode_master.sh
+
+# 8. المنفذ الافتراضي
 EXPOSE 8080
 
-# الأمر الافتراضي (سنغيره في Fly.toml)
-CMD ["node", "dist/api.js"]
+# الأمر الافتراضي (سيتم تغييره بواسطة fly.toml حسب نوع العملية)
+CMD ["npm", "start"]

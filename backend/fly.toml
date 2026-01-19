@@ -5,27 +5,24 @@ primary_region = "fra"
   dockerfile = "Dockerfile"
 
 [processes]
-  api = "node dist/api.js"      # سيرفر الاستقبال
-  worker = "node dist/worker.js" # محرك المعالجة
+  app = "npm start"
+  worker = "npm run start:worker"
 
-[[services]]
-  processes = ["api"]
+
+[[http_service]]
   internal_port = 8080
-  protocol = "tcp"
-  
-  [[services.ports]]
-    handlers = ["http"]
-    port = 80
-  [[services.ports]]
-    handlers = ["tls", "http"]
-    port = 443
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"] # هذا يعني أن منفذ الويب يذهب فقط لعملية الـ app
 
 [[vm]]
-  size = "shared-cpu-2x"  
-  memory = "2gb"        
+  size = "shared-cpu-2x"
+  memory = "1024mb" # 256 قد تكون قليلة للترميز
   processes = ["worker"]
-  
+
 [[vm]]
   size = "shared-cpu-1x"
-  memory = "512mb"
-  processes = ["api"]
+  memory = "256mb"
+  processes = ["app"]
