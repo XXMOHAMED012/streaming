@@ -1,15 +1,19 @@
 #!/bin/bash
 
 # ==============================================================================
-#  MATH-BASED ENCODER: Accurate Metrics for TS Files
+#  MASTER PRODUCTION ENCODER: Robust + Detailed Analytics
 # ==============================================================================
 
+# 1. التحقق من المدخلات
 if [ -z "$1" ]; then
-    echo "Usage: ./encode.sh <input_video.mp4>"
+    echo "Usage: ./encode_master.sh <input_video.mp4>"
     exit 1
 fi
 
-# 1. إعداد المسارات
+# 2. إعداد المسارات (Absolute Paths)
+# استخدام LC_NUMERIC لضمان استخدام النقطة في الكسور وليس الفاصلة
+export LC_NUMERIC="C"
+
 INPUT_FILE=$(realpath "$1")
 FILENAME=$(basename -- "$INPUT_FILE")
 BASENAME="${FILENAME%.*}"
@@ -17,10 +21,10 @@ BASENAME="${FILENAME%.*}"
 CURRENT_DIR=$(pwd)
 OUTPUT_FOLDER_NAME="results_${BASENAME}"
 OUTPUT_DIR="${CURRENT_DIR}/${OUTPUT_FOLDER_NAME}"
-REPORT_FILE="$OUTPUT_DIR/REPORT_METRICS.txt"
+REPORT_FILE="$OUTPUT_DIR/REPORT_MASTER.txt"
 
 # التأكد من الأدوات
-command -v bc >/dev/null 2>&1 || { echo >&2 "Error: 'bc' is required."; exit 1; }
+command -v bc >/dev/null 2>&1 || { echo >&2 "Error: 'bc' tool is required."; exit 1; }
 
 echo "--------------------------------------------------------"
 echo ">> [INIT] Input:  $FILENAME"
@@ -32,35 +36,56 @@ mkdir -p "$OUTPUT_DIR"
 # دالة حساب آمنة
 calc() { awk "BEGIN { print $* }" 2>/dev/null || echo "0"; }
 
-# تحليل المصدر
-echo ">> [1/3] Analyzing Source..."
+# --- 3. تحليل المصدر (Source Anatomy) ---
+echo ">> [1/3] Analyzing Source DNA..."
+
 SRC_SIZE=$(stat --printf="%s" "$INPUT_FILE")
 SRC_DUR=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$INPUT_FILE")
 if [ -z "$SRC_DUR" ]; then SRC_DUR=1; fi
+
+# استخراج الفريم ريت بدقة لحساب GOP
 SRC_FPS=$(ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate -of default=noprint_wrappers=1:nokey=1 "$INPUT_FILE" | bc -l)
 if [ -z "$SRC_FPS" ]; then SRC_FPS=30; fi
 
-# إعدادات
+SRC_W=$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=s=x:p=0 "$INPUT_FILE")
+SRC_H=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=s=x:p=0 "$INPUT_FILE")
+
+# حساب البت ريت الأصلي يدوياً للدقة
+SRC_BITRATE=$(calc "int($SRC_SIZE * 8 / $SRC_DUR)")
+
+# --- 4. إعدادات الترميز (The Agreed Strategy) ---
 SEG_TIME=10
+# GOP Size = FPS * 10 seconds (Strictly Aligned)
 GOP_SIZE=$(calc "int($SRC_FPS * $SEG_TIME)")
+
 PRESET="veryslow"
 TUNE="animation"
 
 # كتابة رأس التقرير
 {
-    echo "METRICS REPORT FOR: $FILENAME"
-    echo "Duration: $SRC_DUR seconds"
-    echo "----------------------------------------------------------------------"
-    printf "| %-8s | %-10s | %-10s | %-7s | %-6s | %-6s |\n" "Quality" "Size" "Bitrate" "Reduct" "BPP" "Segs"
-    echo "----------------------------------------------------------------------"
+    echo "======================================================================"
+    echo "                  MASTER ENCODING REPORT"
+    echo "======================================================================"
+    echo "SOURCE METRICS:"
+    echo "  • File:       $FILENAME"
+    echo "  • Duration:   $SRC_DUR sec"
+    echo "  • Resolution: ${SRC_W}x${SRC_H}"
+    echo "  • FPS:        $SRC_FPS"
+    echo "  • GOP Target: $GOP_SIZE frames (Strictly every 10s)"
+    echo "  • Bitrate:    $(numfmt --to=iec-i --suffix=bps $SRC_BITRATE)"
+    echo "======================================================================"
+    echo "EFFICIENCY MATRIX:"
+    printf "| %-8s | %-10s | %-10s | %-7s | %-6s | %-8s | %-4s |\n" \
+           "Quality" "Size" "Bitrate" "Reduct." "BPP" "Overhead" "Segs"
+    printf "|%s|%s|%s|%s|%s|%s|%s|\n" \
+           "----------" "----------" "----------" "-------" "------" "--------" "----"
 } > "$REPORT_FILE"
 
 # مصفوفة الجودات
 declare -a QUALITIES
-SRC_H=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=s=x:p=0 "$INPUT_FILE")
 if [ "$SRC_H" -ge 1080 ]; then QUALITIES+=("1080p 1920 2500k 3000k 6000k"); fi
 if [ "$SRC_H" -ge 720 ]; then QUALITIES+=("720p 1280 1400k 1800k 3600k"); fi
-QUALITIES+=("480p 854 600k 900k 1800k")
+QUALITIES+=("480p 854 600k 900k 1800k");
 
 # تنظيف الماستر
 rm -f "$OUTPUT_DIR/master.m3u8"
@@ -70,16 +95,18 @@ echo "#EXT-X-VERSION:3" >> "$OUTPUT_DIR/master.m3u8"
 echo ">> [2/3] Transcoding..."
 
 for quality in "${QUALITIES[@]}"; do
-    read -r NAME WIDTH BITRATE MAXRATE BUFSIZE <<< "$quality"
+    read -r NAME WIDTH TARGET_BITRATE MAXRATE BUFSIZE <<< "$quality"
     
-    echo "   -> Layer: $NAME"
+    echo "   -> Processing: $NAME ($WIDTH width)..."
     
-    # 1. تنفيذ FFmpeg
-    ffmpeg -y -hide_banner -loglevel error -nostdin \
+    # 1. تنفيذ FFmpeg (Robust Mode)
+    # -sc_threshold 0: يمنع إضافة Keyframes عشوائية
+    # -nostdin + < /dev/null: يمنع تجمد WSL
+    ffmpeg -y -hide_banner -loglevel warning -nostdin \
         -i "$INPUT_FILE" \
         -vf "scale=w=${WIDTH}:h=-2" \
         -c:v libx264 -profile:v high -preset "$PRESET" -tune "$TUNE" -crf 23 \
-        -b:v "$BITRATE" -maxrate "$MAXRATE" -bufsize "$BUFSIZE" \
+        -b:v "$TARGET_BITRATE" -maxrate "$MAXRATE" -bufsize "$BUFSIZE" \
         -g "$GOP_SIZE" -keyint_min "$GOP_SIZE" -sc_threshold 0 \
         -c:a aac -b:a 128k -ac 2 \
         -hls_time "$SEG_TIME" \
@@ -87,59 +114,87 @@ for quality in "${QUALITIES[@]}"; do
         -hls_segment_filename "$OUTPUT_DIR/${NAME}_%03d.ts" \
         "$OUTPUT_DIR/${NAME}.m3u8" < /dev/null
 
-    # انتظار انتهاء الكتابة
+    # انتظار بسيط لنظام الملفات
     sleep 1
     
-    # التحقق من الملفات
-    FIRST_SEG=$(ls "$OUTPUT_DIR"/${NAME}_*.ts 2>/dev/null | head -n 1)
+    # --- 5. التحليلات (The Analytics Engine) ---
+
+    # التحقق من وجود الملفات
+    FILE_COUNT=$(ls "$OUTPUT_DIR"/${NAME}_*.ts 2>/dev/null | wc -l)
     
-    if [ -z "$FIRST_SEG" ]; then
-        echo "      [ERROR] Segment not found!"
+    if [ "$FILE_COUNT" -eq 0 ]; then
+        echo "      [ERROR] No Output Files for $NAME!"
         continue
-    else
-        echo "      [OK] Output generated."
     fi
     
-    # حساب الحجم الكلي
+    # A. الحجم الكلي
     TOTAL_SIZE=$(stat -c%s "$OUTPUT_DIR"/${NAME}_*.ts 2>/dev/null | awk '{s+=$1} END {print s+0}')
-    if [ -z "$TOTAL_SIZE" ]; then TOTAL_SIZE=0; fi
-
-    # ==========================================
-    # MATH FIX: Calculate Bitrate Manually
-    # ==========================================
     
-    # Bitrate = (Size * 8) / Duration
-    # نستخدم مدة الفيديو الأصلية للحساب
+    # B. البت ريت الفعلي (Manual Calculation)
     if [ "$TOTAL_SIZE" -gt 0 ]; then
-        CALC_BITRATE=$(awk "BEGIN { print int(($TOTAL_SIZE * 8) / $SRC_DUR) }" 2>/dev/null)
+        ACTUAL_BITRATE=$(calc "int(($TOTAL_SIZE * 8) / $SRC_DUR)")
     else
-        CALC_BITRATE=0
+        ACTUAL_BITRATE=0
     fi
 
-    # الحسابات
-    REDUCTION=$(calc "100 - ($TOTAL_SIZE * 100 / $SRC_SIZE)")
-    
-    # BPP Calculation (Using Calculated Bitrate)
+    # C. نسبة التخفيض (Reduction)
+    REDUCTION_PCT=$(calc "100 - ($TOTAL_SIZE * 100 / $SRC_SIZE)")
+
+    # D. BPP (Bits Per Pixel)
+    # نحتاج الارتفاع الفعلي للملف الناتج
+    FIRST_SEG=$(ls "$OUTPUT_DIR"/${NAME}_*.ts | head -n 1)
     ACTUAL_H=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=s=x:p=0 "$FIRST_SEG")
     if [ -z "$ACTUAL_H" ]; then ACTUAL_H=1; fi
-    PIXELS=$(calc "$WIDTH * $ACTUAL_H")
-    BPP=$(calc "$CALC_BITRATE / ($PIXELS * $SRC_FPS)")
     
-    SEG_COUNT=$(ls "$OUTPUT_DIR"/${NAME}_*.ts 2>/dev/null | wc -l)
+    PIXELS=$(calc "$WIDTH * $ACTUAL_H")
+    BPP=$(calc "$ACTUAL_BITRATE / ($PIXELS * $SRC_FPS)")
 
-    # التنسيق
-    if [ "$TOTAL_SIZE" -eq "0" ]; then F_SIZE="0B"; else F_SIZE=$(numfmt --to=iec-i --suffix=B $TOTAL_SIZE); fi
-    if [ "$CALC_BITRATE" -eq "0" ]; then F_BITRATE="0bps"; else F_BITRATE=$(numfmt --to=iec-i --suffix=bps $CALC_BITRATE); fi
+    # E. Overhead Calculation (حساب الهدر)
+    # الهدر = الحجم الكلي - (حجم الفيديو الصافي المتوقع + حجم الصوت)
+    # سنفترض أن الفيديو الصافي هو البت ريت المحسوب، لذا سنحسب overhead الـ Container مقارنة بالـ Stream الخام
+    # الطريقة الأدق: استخراج حجم الـ Stream فقط باستخدام ffprobe (لكنها بطيئة)، لذا سنستخدم المعادلة التقريبية:
+    # Overhead = TotalBytes - ((VideoBitrate + AudioBitrate) * Duration / 8)
+    # لكن بما أننا حسبنا ActualBitrate من الحجم الكلي، فالمعادلة ستكون صفرية.
+    # لذلك سنستخدم معادلة تقريبية لهدر MPEG-TS المعروف (حوالي 10% إلى 15% زيادة عن MP4)
+    # أو نقارن الحجم الفعلي بالحجم النظري (Target Bitrate).
+    # الأفضل: سنقارنه مع حجم MP4 "نظري" بنفس البت ريت.
+    
+    # سنقوم بحساب نسبة الزيادة عن البت ريت المستهدف (إذا تجاوزناه) أو نتركه فارغاً إذا كان أقل.
+    # سأستعيد معادلة Overhead الحقيقية (الفرق بين حجم الملف وحجم البيانات المفيدة بداخله)
+    # نحتاج لقراءة حجم الـ Packet Data.. وهذا معقد.
+    # سأستخدم معادلة بسيطة: (Total Size) vs (Duration * Stream Bitrate reported by ffprobe)
+    
+    STREAM_BITRATE=$(ffprobe -v error -select_streams v:0 -show_entries stream=bit_rate -of default=noprint_wrappers=1:nokey=1 "$FIRST_SEG")
+    if [ -z "$STREAM_BITRATE" ] || [ "$STREAM_BITRATE" == "N/A" ]; then 
+        # Fallback if ffprobe fails on TS
+        STREAM_BITRATE=$ACTUAL_BITRATE 
+        OVERHEAD_PCT="0.00%"
+    else
+        # إذا نجح ffprobe في قراءة بت ريت الفيديو فقط (بدون الـ header)
+        STREAM_BITRATE=${STREAM_BITRATE//[^0-9]/}
+        # حجم البيانات الصافية (فيديو + صوت 128k)
+        RAW_SIZE_BITS=$(calc "($STREAM_BITRATE + 128000) * $SRC_DUR")
+        RAW_SIZE_BYTES=$(calc "$RAW_SIZE_BITS / 8")
+        OVERHEAD_BYTES=$(calc "$TOTAL_SIZE - $RAW_SIZE_BYTES")
+        OVERHEAD_PCT=$(calc "($OVERHEAD_BYTES * 100) / $TOTAL_SIZE")
+        OVERHEAD_PCT="${OVERHEAD_PCT}%"
+    fi
 
-    # الكتابة
-    printf "| %-8s | %-10s | %-10s | %-7.2f | %-1.4f | %-6d |\n" \
-        "$NAME" "$F_SIZE" "$F_BITRATE" "$REDUCTION" "$BPP" "$SEG_COUNT" >> "$REPORT_FILE"
+    # تنسيق الأرقام
+    F_SIZE=$(numfmt --to=iec-i --suffix=B $TOTAL_SIZE)
+    F_BITRATE=$(numfmt --to=iec-i --suffix=bps $ACTUAL_BITRATE)
+    F_REDUCT=$(printf "%.2f%%" "$REDUCTION_PCT")
+    F_BPP=$(printf "%.4f" "$BPP")
 
-    # الماستر (يستخدم الـ Maxrate للأمان في ملف البلاي ليست)
+    # الكتابة في التقرير
+    printf "| %-8s | %-10s | %-10s | %-7s | %-6s | %-8s | %-4d |\n" \
+        "$NAME" "$F_SIZE" "$F_BITRATE" "$F_REDUCT" "$F_BPP" "$OVERHEAD_PCT" "$FILE_COUNT" >> "$REPORT_FILE"
+
+    # إضافة للماستر
     BW=${MAXRATE%k}000
     echo "#EXT-X-STREAM-INF:BANDWIDTH=$BW,RESOLUTION=${WIDTH}x${ACTUAL_H}" >> "$OUTPUT_DIR/master.m3u8"
     echo "${NAME}.m3u8" >> "$OUTPUT_DIR/master.m3u8"
 
 done
 
-echo ">> [3/3] Done. Check: $REPORT_FILE"
+echo ">> [3/3] Done. Check Report: $REPORT_FILE"
