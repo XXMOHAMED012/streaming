@@ -10,7 +10,7 @@ primary_region = 'fra'
   dockerfile = 'Dockerfile'
 
 [processes]
-  app = 'npm start'
+  app = 'npm run start'
   worker = 'npm run start:worker'
 
 [http_service]

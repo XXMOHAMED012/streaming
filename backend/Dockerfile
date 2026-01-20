@@ -2,12 +2,17 @@
 FROM node:20-slim
 
 # 2. تثبيت المكتبات الضرورية للنظام (FFmpeg + Python للبناء)
-RUN apt-get update && apt-get install -y \
+RUN apt-get update -qq && \
+    apt-get install --no-install-recommends -y \
     ffmpeg \
     python3 \
     make \
     g++ \
-    && rm -rf /var/lib/apt/lists/*
+    bc \
+    ca-certificates \
+    curl && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # 3. تحديد مجلد العمل
 WORKDIR /app
