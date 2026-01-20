@@ -48,7 +48,7 @@ SRC_H=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv
 SRC_BITRATE=$(calc "int($SRC_SIZE * 8 / $SRC_DUR)")
 
 # --- 4. إعدادات الترميز ---
-SEG_TIME=10
+SEG_TIME=4
 GOP_SIZE=$(calc "int($SRC_FPS * $SEG_TIME)")
 PRESET="veryslow"
 TUNE="animation"
@@ -103,6 +103,7 @@ for quality in "${QUALITIES[@]}"; do
         -c:a aac -b:a 128k -ac 2 \
         -hls_time "$SEG_TIME" \
         -hls_playlist_type vod \
+        -hls_flags independent_segments \
         -hls_segment_filename "$OUTPUT_DIR/${NAME}_%03d.ts" \
         "$OUTPUT_DIR/${NAME}.m3u8" < /dev/null
 
