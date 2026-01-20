@@ -26,6 +26,11 @@ primary_region = 'fra'
   memory = '32gb'
   processes = ['worker']
 
+[[mounts]]
+  source = "worker_data"   
+  destination = "/data"     
+  processes = ["worker"]   
+
 [[vm]]
   size = 'shared-cpu-1x'
   memory = '512mb'

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==============================================================================
-#  MASTER PRODUCTION ENCODER: Robust + Analytics + Timing + Safety
+#  MASTER PRODUCTION ENCODER: Fast Start + Robust Analytics + Safety
 # ==============================================================================
 
 # 1. التحقق من المدخلات
@@ -47,7 +47,7 @@ SRC_H=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv
 
 SRC_BITRATE=$(calc "int($SRC_SIZE * 8 / $SRC_DUR)")
 
-# --- 4. إعدادات الترميز ---
+# --- 4. إعدادات الترميز (Fast Start Optimized) ---
 SEG_TIME=4
 GOP_SIZE=$(calc "int($SRC_FPS * $SEG_TIME)")
 PRESET="veryslow"
@@ -83,7 +83,7 @@ rm -f "$OUTPUT_DIR/master.m3u8"
 echo "#EXTM3U" > "$OUTPUT_DIR/master.m3u8"
 echo "#EXT-X-VERSION:3" >> "$OUTPUT_DIR/master.m3u8"
 
-echo ">> [2/3] Transcoding..."
+echo ">> [2/3] Transcoding (Fast Start Mode)..."
 
 # [TIMER START]
 START_TIME=$(date +%s)
@@ -100,6 +100,7 @@ for quality in "${QUALITIES[@]}"; do
         -c:v libx264 -profile:v high -preset "$PRESET" -tune "$TUNE" -crf 23 \
         -b:v "$TARGET_BITRATE" -maxrate "$MAXRATE" -bufsize "$BUFSIZE" \
         -g "$GOP_SIZE" -keyint_min "$GOP_SIZE" -sc_threshold 0 \
+        -force_key_frames "expr:gte(t,n_forced*$SEG_TIME)" \
         -c:a aac -b:a 128k -ac 2 \
         -hls_time "$SEG_TIME" \
         -hls_playlist_type vod \
@@ -170,7 +171,7 @@ else
     SPEED_FACTOR="N/A"
 fi
 
-# الكتابة داخل الملف فقط (تمت إزالة أمر echo للشاشة)
+# الكتابة داخل الملف فقط
 {
     echo "======================================================================"
     echo "PERFORMANCE METRICS:"

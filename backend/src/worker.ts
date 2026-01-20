@@ -51,6 +51,11 @@ const processJob = async (job: Job) => {
   const { videoId, s3Key } = job.data;
   console.log(`[Worker] Starting job ${job.id} for video ${videoId}`);
 
+  const volumePath = "/data";
+  const hasVolume = fs.existsSync(volumePath);
+
+  const baseDir = hasVolume ? volumePath : process.cwd();
+
   const tempDir = path.resolve(__dirname, `../temp/${videoId}`);
   const inputPath = path.join(tempDir, "source.mp4");
 
