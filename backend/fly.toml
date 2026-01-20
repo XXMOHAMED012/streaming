@@ -22,8 +22,8 @@ primary_region = 'fra'
   processes = ['app']
 
 [[vm]]
-  size = 'shared-cpu-2x'
-  memory = '1gb'
+  size = 'performance-4x'
+  memory = '32gb'
   processes = ['worker']
 
 [[vm]]
