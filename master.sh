@@ -63,12 +63,12 @@ GOP_SIZE=$(calc "int($SRC_FPS * $SEG_TIME)")
 declare -a QUALITIES
 
 if [ "$SRC_H" -ge 1080 ]; then
-    QUALITIES+=("1080p 1920 4500k 5000k 7500k 28")
+    QUALITIES+=("1080p 1920 4500k 5000k 7500k 25")
 fi
 if [ "$SRC_H" -ge 720 ]; then
-    QUALITIES+=("720p 1280 2500k 2800k 4200k 28")
+    QUALITIES+=("720p 1280 2500k 2800k 4200k 25")
 fi
-QUALITIES+=("480p 854 800k 1000k 2000k 28")
+QUALITIES+=("480p 854 800k 1000k 2000k 25")
 
 rm -f "$OUTPUT_DIR/master.m3u8"
 echo "#EXTM3U" > "$OUTPUT_DIR/master.m3u8"
@@ -161,8 +161,10 @@ for quality in "${QUALITIES[@]}"; do
     
     REDUCTION_PCT=$(calc "100 - ($TOTAL_Q_SIZE * 100 / $SRC_SIZE_BYTES)")
     
-    ACTUAL_H=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=s=x:p=0 "$VARIANT_DIR/seg_000.ts" 2>/dev/null)
-    if [ -z "$ACTUAL_H" ]; then ACTUAL_H=$WIDTH; fi 
+    ACTUAL_H=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=s=x:p=0 "$VARIANT_DIR/seg_000.ts" 2>/dev/null | head -n 1 | tr -d '[:space:]')
+    if [ -z "$ACTUAL_H" ]; then 
+        ACTUAL_H=$(calc "int($WIDTH * 9 / 16)")
+    fi
     PIXELS=$(calc "$WIDTH * $ACTUAL_H")
     BPP=$(calc "$REAL_BITRATE_BPS / ($PIXELS * $SRC_FPS)")
     
@@ -191,12 +193,8 @@ for quality in "${QUALITIES[@]}"; do
         echo ""
     } >> "$REPORT_FILE"
 
-    # إضافة للماستر
-    SAFE_PEAK_BW=$(calc "int($PEAK_BITRATE_BPS * 1.10)")
-    SAFE_AVG_BW=$(calc "int($REAL_BITRATE_BPS * 1.05)")
-
     printf "#EXT-X-STREAM-INF:BANDWIDTH=%d,AVERAGE-BANDWIDTH=%d,RESOLUTION=%sx%s,CODECS=\"avc1.640028,mp4a.40.2\"\n%s/index.m3u8\n" \
-        "$SAFE_PEAK_BW" "$SAFE_AVG_BW" "$WIDTH" "$ACTUAL_H" "$NAME" >> "$OUTPUT_DIR/master.m3u8"
+        "$PEAK_BITRATE_BPS" "$REAL_BITRATE_BPS" "$WIDTH" "$ACTUAL_H" "$NAME" >> "$OUTPUT_DIR/master.m3u8"
 
 done
 
