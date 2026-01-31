@@ -199,47 +199,64 @@ def main():
     mux_variants = judge.get_master_variants(mux_master)
     local_variants = judge.get_master_variants(local_master)
     
-    # Identify common resolutions to compare
     common_res = set(mux_variants.keys()).intersection(set(local_variants.keys()))
     
     if not common_res:
-        print("❌ No common resolutions found between Mux and Local!")
-        print(f"Mux: {list(mux_variants.keys())}")
-        print(f"Local: {list(local_variants.keys())}")
+        print("❌ No common resolutions found!")
         sys.exit(1)
         
     results_table = []
     
-    for res in sorted(common_res, reverse=True): # Start high quality
+    for res in sorted(common_res, reverse=True):
         print(f"\n⚔️  BATTLE ROUND: {res} ⚔️")
         
-        # 1. Process Mux
-        mux_ts_files = judge.download_segments(mux_variants[res], f"mux_{res}", limit=10)
+        # 1. Download Segments (نحمل عدد أكبر قليلاً لضمان تغطية الوقت)
+        # نحمل 12 قطعة من Mux (12 * 5 = 60s)
+        mux_ts_files = judge.download_segments(mux_variants[res], f"mux_{res}", limit=12)
+        # نحمل 15 قطعة من Local (15 * 4 = 60s) - لضمان أننا نغطي نفس المدة
+        local_ts_files = judge.download_segments(local_variants[res], f"local_{res}", limit=15)
+
         mux_merged = judge.concat_segments(mux_ts_files, f"mux_{res}")
-        
-        # 2. Process Local
-        local_ts_files = judge.download_segments(local_variants[res], f"local_{res}", limit=10)
         local_merged = judge.concat_segments(local_ts_files, f"local_{res}")
         
         if not mux_merged or not local_merged:
             print("   ⚠️ Skipping due to missing segments.")
             continue
             
-        # 3. Prepare Reference (using Mux duration as baseline, usually they are similar)
-        duration = judge.get_duration(mux_merged)
-        reference = judge.prepare_reference(duration, f"ref_{res}")
+        # 2. Time Normalization (التعديل الجديد والمهم) ⏱️
+        # نحسب مدة كل ملف
+        dur_mux = judge.get_duration(mux_merged)
+        dur_loc = judge.get_duration(local_merged)
+        
+        # نختار المدة الأقصر لنحاكم الجميع عليها
+        test_duration = min(dur_mux, dur_loc)
+        print(f"   ⏱️  Normalizing test duration to: {test_duration:.2f} seconds")
+
+        # 3. Prepare Reference (Cut exact duration)
+        reference = judge.prepare_reference(test_duration, f"ref_{res}")
+        
+        # دالة مساعدة لقص الملفات المدمجة إذا كانت أطول من اللازم
+        def trim_to_duration(input_path, duration, output_suffix):
+            output = input_path.replace(".ts", f"_{output_suffix}.ts")
+            cmd = ["ffmpeg", "-y", "-v", "error", "-i", input_path, "-t", str(duration), "-c", "copy", output]
+            subprocess.run(cmd)
+            return output
+
+        # نقوم بقص الملفات المدمجة لتطابق المرجع تماماً
+        mux_final = trim_to_duration(mux_merged, test_duration, "trimmed")
+        local_final = trim_to_duration(local_merged, test_duration, "trimmed")
         
         # 4. Fight!
         print(f"   🥊 Assessing Mux Quality...")
-        mux_vmaf, mux_ssim = judge.run_vmaf_ssim(mux_merged, reference)
+        mux_vmaf, mux_ssim = judge.run_vmaf_ssim(mux_final, reference)
         
         print(f"   🥊 Assessing Local Quality...")
-        loc_vmaf, loc_ssim = judge.run_vmaf_ssim(local_merged, reference)
+        loc_vmaf, loc_ssim = judge.run_vmaf_ssim(local_final, reference)
         
         # Determine Winner
         diff = loc_vmaf - mux_vmaf
-        if diff > 1: winner = "LOCAL 🏆"
-        elif diff < -1: winner = "MUX 👑"
+        if diff > 0.5: winner = "LOCAL 🏆" # قللنا الهامش ليكون أكثر دقة
+        elif diff < -0.5: winner = "MUX 👑"
         else: winner = "DRAW 🤝"
         
         results_table.append([
@@ -254,9 +271,6 @@ def main():
     print("="*80)
     headers = ["Resolution", "Mux VMAF", "Mux SSIM", "Local VMAF", "Local SSIM", "Winner"]
     print(tabulate(results_table, headers=headers, tablefmt="grid"))
-    print("\nSCORE GUIDE:")
-    print("* VMAF (0-100): 100 is identical to source. >93 is excellent. >80 is good.")
-    print("* SSIM (0-1): 1.0 is identical. >0.95 is excellent.")
     print("="*80)
 
 if __name__ == "__main__":

@@ -103,6 +103,7 @@ for quality in "${QUALITIES[@]}"; do
         -g "$GOP_SIZE" -keyint_min "$GOP_SIZE" -sc_threshold 0 \
         -force_key_frames "expr:gte(t,n_forced*$SEG_TIME)" \
         -flags +cgop \
+        -aq-mode 3 \
         \
         -c:a aac -b:a 128k -ac 2 \
         \
