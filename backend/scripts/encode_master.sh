@@ -96,14 +96,16 @@ for quality in "${QUALITIES[@]}"; do
     # تنفيذ FFmpeg
     ffmpeg -y -hide_banner -loglevel warning -nostdin \
         -i "$INPUT_FILE" \
-        -vf "scale=w=${WIDTH}:h=-2" \
-        -c:v libx264 -profile:v high -preset "$PRESET" -tune "$TUNE" -crf 23 \
+        -vf "scale=w=${WIDTH}:h=-2:flags=lanczos" \
+        -c:v libx264 -profile:v high -preset "$PRESET" -tune "$TUNE" -crf 28 \
         -b:v "$TARGET_BITRATE" -maxrate "$MAXRATE" -bufsize "$BUFSIZE" \
         -g "$GOP_SIZE" -keyint_min "$GOP_SIZE" -sc_threshold 0 \
         -force_key_frames "expr:gte(t,n_forced*$SEG_TIME)" \
         -c:a aac -b:a 128k -ac 2 \
+        -flags +cgop \
         -hls_time "$SEG_TIME" \
         -hls_playlist_type vod \
+        -hls_segment_type mpegts \
         -hls_flags independent_segments \
         -hls_segment_filename "$OUTPUT_DIR/${NAME}_%03d.ts" \
         "$OUTPUT_DIR/${NAME}.m3u8" < /dev/null

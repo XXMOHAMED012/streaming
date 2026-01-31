@@ -105,14 +105,28 @@ for quality in "${QUALITIES[@]}"; do
     ffmpeg -y -hide_banner -loglevel warning -nostdin \
         -i "$INPUT_FILE" \
         -vf "scale=w=${WIDTH}:h=-2" \
-        -c:v libx264 -profile:v high -preset "$PRESET" -tune "$TUNE" -crf 23 \
+        -c:v libx264 -profile:v high -preset "$PRESET" -tune "$TUNE" -crf 28 \
         -b:v "$TARGET_BITRATE" -maxrate "$MAXRATE" -bufsize "$BUFSIZE" \
         -g "$GOP_SIZE" -keyint_min "$GOP_SIZE" -sc_threshold 0 \
+        -flags +cgop \
         -c:a aac -b:a 128k -ac 2 \
         -hls_time "$SEG_TIME" \
         -hls_playlist_type vod \
+        -hls_segment_type mpegts \
         -hls_segment_filename "$OUTPUT_DIR/${NAME}_%03d.ts" \
         "$OUTPUT_DIR/${NAME}.m3u8" < /dev/null
+
+    ffmpeg -y -hide_banner -loglevel warning -stats \
+            -i \"$INPUT\" \
+            -vf scale=w=${SCALE_WIDTH}:h=-2:flags=lanczos \
+            -c:v libx264 -preset $preset -tune animation \
+            -crf 28 -maxrate 1500k -bufsize 3000k \
+            -g 240 -keyint_min 24 -sc_threshold 40 \
+            -c:a aac -b:a 128k \
+            -hls_time 10 -hls_playlist_type vod \
+            -hls_segment_filename \"$output/video_%03d.ts\" \
+            \"$output/video.m3u8\"
+
 
     # انتظار بسيط لنظام الملفات
     sleep 1

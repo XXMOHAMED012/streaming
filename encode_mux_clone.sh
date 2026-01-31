@@ -1,31 +1,27 @@
 #!/bin/bash
 
 # ==============================================================================
-#  MASTER ENCODER V4: Correct Frame Counting + Total Frames (FBS) fix
+#  MASTER ENCODER V5: Mux Clone Edition (Seamless Failover Optimized)
 # ==============================================================================
 
-# 1. التحقق من المدخلات
 if [ -z "$1" ]; then
     echo "Usage: ./encode_master.sh <input_video.mp4>"
     exit 1
 fi
 
-# إعداد المسارات
 export LC_NUMERIC="C"
 INPUT_FILE=$(realpath "$1")
 FILENAME=$(basename -- "$INPUT_FILE")
 OUTPUT_DIR=$(pwd)
 REPORT_FILE="$OUTPUT_DIR/REPORT_MASTER.txt"
 
-# التحقق من الأدوات
 command -v bc >/dev/null 2>&1 || { echo >&2 "Error: 'bc' tool is required."; exit 1; }
 command -v ffprobe >/dev/null 2>&1 || { echo >&2 "Error: 'ffprobe' is required."; exit 1; }
 
-# دالة حسابية
 calc() { awk "BEGIN { print $* }" 2>/dev/null || echo "0"; }
 
 # ------------------------------------------------------------------------------
-# 2. تحليل المصدر (Source Analysis)
+# 1. Source Analysis
 # ------------------------------------------------------------------------------
 echo ">> [1/4] Analyzing Source DNA..."
 
@@ -38,15 +34,13 @@ SRC_BITRATE_BPS=$(calc "int($SRC_SIZE_BYTES * 8 / $SRC_DUR)")
 SRC_BITRATE_KBPS=$(calc "int($SRC_BITRATE_BPS / 1000)")
 SRC_SIZE_MB=$(calc "$SRC_SIZE_BYTES / 1024 / 1024")
 
-# كتابة رأس التقرير
 {
     echo "======================================================================"
-    echo "                     MASTER ENCODING REPORT"
+    echo "                     MASTER ENCODING REPORT (Mux Clone)"
     echo "======================================================================"
     echo "ORIGINAL FILE METRICS:"
     echo "File:       $FILENAME"
     echo "Duration:   $SRC_DUR sec"
-    echo "Size:       ${SRC_SIZE_MB} MB"
     echo "Resolution: ${SRC_W}x${SRC_H}"
     echo "FPS:        $SRC_FPS"
     echo "Bitrate:    ${SRC_BITRATE_KBPS} kbps"
@@ -55,20 +49,32 @@ SRC_SIZE_MB=$(calc "$SRC_SIZE_BYTES / 1024 / 1024")
 } > "$REPORT_FILE"
 
 # ------------------------------------------------------------------------------
-# 3. إعداد الجودات الذكية
+# 2. Mux-Matched Settings
 # ------------------------------------------------------------------------------
-SEG_TIME=4
+# تم التعديل ليطابق تحليل Mux (5 ثواني)
+SEG_TIME=5
 GOP_SIZE=$(calc "int($SRC_FPS * $SEG_TIME)")
 
 declare -a QUALITIES
 
+# ملاحظة: قمنا بتقليل البت ريت ليقترب من Mux، مع الحفاظ على هامش جودة أعلى قليلاً
+# Format: NAME WIDTH TARGET MAX BUF CRF
+
 if [ "$SRC_H" -ge 1080 ]; then
-    QUALITIES+=("1080p 1920 4500k 5000k 7500k 28")
+    # 1080p (Mux usually doesn't output this for basic plans, but we will keeping it optimized)
+    QUALITIES+=("1080p 1920 3500k 4500k 6000k 26")
 fi
+
 if [ "$SRC_H" -ge 720 ]; then
-    QUALITIES+=("720p 1280 2500k 2800k 4200k 28")
+    # Mux was ~500k. We use 800k-1200k to be safe for sports/action
+    QUALITIES+=("720p 1280 1200k 1800k 3000k 27")
 fi
-QUALITIES+=("480p 854 800k 1000k 2000k 28")
+
+# Mux Standard: 480p
+QUALITIES+=("480p 854 600k 900k 1500k 28")
+
+# Mux Low-End: 270p (Adding this as per Mux analysis)
+QUALITIES+=("270p 480 300k 500k 800k 28")
 
 rm -f "$OUTPUT_DIR/master.m3u8"
 echo "#EXTM3U" > "$OUTPUT_DIR/master.m3u8"
@@ -76,7 +82,7 @@ echo "#EXT-X-VERSION:3" >> "$OUTPUT_DIR/master.m3u8"
 echo "#EXT-X-INDEPENDENT-SEGMENTS" >> "$OUTPUT_DIR/master.m3u8"
 
 # ------------------------------------------------------------------------------
-# 4. المعالجة (Processing Loop)
+# 3. Processing
 # ------------------------------------------------------------------------------
 echo ">> [2/4] Transcoding Started..."
 TOTAL_START=$(date +%s)
@@ -94,6 +100,7 @@ for quality in "${QUALITIES[@]}"; do
     Q_START=$(date +%s)
 
     # ========================== FFmpeg Command ==========================
+    # Added -bf 3 to increase B-frames usage (Matching Mux efficiency)
     ffmpeg -y -hide_banner -loglevel error -nostdin \
         -i "$INPUT_FILE" \
         -vf "scale=w=${WIDTH}:h=-2:flags=lanczos" \
@@ -103,6 +110,7 @@ for quality in "${QUALITIES[@]}"; do
         -g "$GOP_SIZE" -keyint_min "$GOP_SIZE" -sc_threshold 0 \
         -force_key_frames "expr:gte(t,n_forced*$SEG_TIME)" \
         -flags +cgop \
+        -bf 3 \
         \
         -c:a aac -b:a 128k -ac 2 \
         \
@@ -118,15 +126,14 @@ for quality in "${QUALITIES[@]}"; do
     Q_DURATION=$(($Q_END - $Q_START))
     
     # ------------------------------------------------------------------
-    # 5. التحليل الجنائي (Forensics) - المصحح
+    # 4. Forensics & Reporting
     # ------------------------------------------------------------------
     echo "   -> Analyzing output..."
     
-    # أ) الحجم والملفات
+    # Size & Bitrate
     TOTAL_Q_SIZE=$(stat -c%s "$VARIANT_DIR"/seg_*.ts 2>/dev/null | awk '{s+=$1} END {print s+0}')
     SEG_COUNT=$(ls "$VARIANT_DIR"/seg_*.ts 2>/dev/null | wc -l)
     
-    # ب) البت ريت
     REAL_BITRATE_BPS=$(calc "int(($TOTAL_Q_SIZE * 8) / $SRC_DUR)")
     REAL_BITRATE_KBPS=$(calc "int($REAL_BITRATE_BPS / 1000)")
     
@@ -135,30 +142,20 @@ for quality in "${QUALITIES[@]}"; do
     PEAK_BITRATE_BPS=$(calc "int(($MAX_SEG_BYTES * 8) / $SEG_TIME)")
     PEAK_BITRATE_KBPS=$(calc "int($PEAK_BITRATE_BPS / 1000)")
 
-    # ج) عد الإطارات (الطريقة الصحيحة)
-    # نقوم بدمج الملفات وتمريرها لـ ffprobe كتيار واحد لقراءتها بدقة
-    echo "   -> Counting Frames (Forensics Mode)..."
-    
-    # ننشئ ملف مؤقت يحتوي على أنواع الإطارات لكل الفيديو
+    # Frame Counting
+    echo "   -> Counting Frames..."
     cat "$VARIANT_DIR"/seg_*.ts | ffprobe -v error -select_streams v:0 -show_entries frame=pict_type -of csv=p=0 - > "$VARIANT_DIR/frames_dump.txt"
     
-    # نستخدم grep -c للعد المباشر (سريع جداً ودقيق)
     I_FRAMES=$(grep -c "I" "$VARIANT_DIR/frames_dump.txt")
     P_FRAMES=$(grep -c "P" "$VARIANT_DIR/frames_dump.txt")
-    B_FRAMES=$(grep -c "B" "$VARIANT_DIR/frames_dump.txt") # نحسب الـ B أيضاً لحساب المجموع
-    
-    # د) حساب FBS (Total Frames)
+    B_FRAMES=$(grep -c "B" "$VARIANT_DIR/frames_dump.txt")
     TOTAL_FRAMES=$(($I_FRAMES + $P_FRAMES + $B_FRAMES))
-    
-    # تنظيف الملف المؤقت
     rm -f "$VARIANT_DIR/frames_dump.txt"
 
-    # هـ) باقي الحسابات
+    # Stats
     COMPRESSION_RATIO=$(calc "$SRC_SIZE_BYTES / $TOTAL_Q_SIZE")
     SPEED_X=$(calc "$SRC_DUR / $Q_DURATION")
     if [ "$Q_DURATION" -eq 0 ]; then SPEED_X="N/A"; fi
-    
-    REDUCTION_PCT=$(calc "100 - ($TOTAL_Q_SIZE * 100 / $SRC_SIZE_BYTES)")
     
     ACTUAL_H=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=s=x:p=0 "$VARIANT_DIR/seg_000.ts" 2>/dev/null)
     if [ -z "$ACTUAL_H" ]; then ACTUAL_H=$WIDTH; fi 
@@ -168,29 +165,21 @@ for quality in "${QUALITIES[@]}"; do
     OVERHEAD_BYTES=$(calc "$TOTAL_Q_SIZE * 0.08")
     OVERHEAD_KB=$(calc "int($OVERHEAD_BYTES / 1024)")
 
-    # كتابة التقرير
     {
         echo "--------------------------------------------------"
         echo " QUALITY: $NAME"
         echo "--------------------------------------------------"
-        echo "Time Taken:       ${Q_DURATION} sec"
-        echo "Comp. Ratio:      ${COMPRESSION_RATIO}:1"
-        echo "Speed Factor:     ${SPEED_X}x"
-        echo "Total Size:       $(calc "$TOTAL_Q_SIZE/1024/1024") MB"
+        echo "Time:             ${Q_DURATION} sec"
+        echo "Size:             $(calc "$TOTAL_Q_SIZE/1024/1024") MB"
         echo "Segments:         $SEG_COUNT"
-        echo "I-Frames:         $I_FRAMES"
-        echo "P-Frames:         $P_FRAMES"
-        echo "FBS (Total Frms): $TOTAL_FRAMES" 
-        echo "Est. Overhead:    ${OVERHEAD_KB} KB"
-        echo "Bitrate (Avg):    ${REAL_BITRATE_KBPS} kbps"
-        echo "Bitrate (Peak):   ${PEAK_BITRATE_KBPS} kbps"
+        echo "Frames (I/P/B):   $I_FRAMES / $P_FRAMES / $B_FRAMES"
         echo "Target Bitrate:   $(echo $TARGET_BITRATE | tr -d 'k') kbps"
-        echo "Reduction:        ${REDUCTION_PCT}%"
+        echo "Actual Bitrate:   ${REAL_BITRATE_KBPS} kbps"
+        echo "Peak Bitrate:     ${PEAK_BITRATE_KBPS} kbps"
         echo "BPP:              $BPP"
         echo ""
     } >> "$REPORT_FILE"
 
-    # إضافة للماستر
     SAFE_PEAK_BW=$(calc "int($PEAK_BITRATE_BPS * 1.10)")
     SAFE_AVG_BW=$(calc "int($REAL_BITRATE_BPS * 1.05)")
 
@@ -199,19 +188,14 @@ for quality in "${QUALITIES[@]}"; do
 
 done
 
-# ------------------------------------------------------------------------------
-# 6. الخاتمة
-# ------------------------------------------------------------------------------
 TOTAL_END=$(date +%s)
 TOTAL_ELAPSED=$(($TOTAL_END - $TOTAL_START))
 FORMATTED_TIME=$(printf '%02dh:%02dm:%02ds\n' $(($TOTAL_ELAPSED/3600)) $(($TOTAL_ELAPSED%3600/60)) $(($TOTAL_ELAPSED%60)))
 
 {
     echo "======================================================================"
-    echo "OVERALL PERFORMANCE:"
     echo "Total Job Time:   $FORMATTED_TIME"
-    echo "Total Qualities:  ${#QUALITIES[@]}"
     echo "======================================================================"
 } >> "$REPORT_FILE"
 
-echo ">> [4/4] Done. Detailed Report saved to: $REPORT_FILE"
+echo ">> [4/4] Done. Report: $REPORT_FILE"
