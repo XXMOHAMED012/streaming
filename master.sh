@@ -63,12 +63,12 @@ GOP_SIZE=$(calc "int($SRC_FPS * $SEG_TIME)")
 declare -a QUALITIES
 
 if [ "$SRC_H" -ge 1080 ]; then
-    QUALITIES+=("1080p 1920 4500k 5000k 7500k 25")
+    QUALITIES+=("1080p 1920 4500k 5000k 7500k 23")
 fi
 if [ "$SRC_H" -ge 720 ]; then
-    QUALITIES+=("720p 1280 2500k 2800k 4200k 25")
+    QUALITIES+=("720p 1280 2500k 2800k 4200k 23")
 fi
-QUALITIES+=("480p 854 800k 1000k 2000k 25")
+QUALITIES+=("480p 854 800k 1000k 2000k 23")
 
 rm -f "$OUTPUT_DIR/master.m3u8"
 echo "#EXTM3U" > "$OUTPUT_DIR/master.m3u8"
@@ -103,6 +103,8 @@ for quality in "${QUALITIES[@]}"; do
         -g "$GOP_SIZE" -keyint_min "$GOP_SIZE" -sc_threshold 0 \
         -force_key_frames "expr:gte(t,n_forced*$SEG_TIME)" \
         -flags +cgop \
+        -bf 5 \
+        -refs 4 \
         -aq-mode 3 \
         \
         -c:a aac -b:a 128k -ac 2 \
